@@ -1,0 +1,19 @@
+{
+    "name": "chibuike/nomba-prestashop",
+    "description": "Nomba Checkout for PrestaShop",
+    "type": "prestashop-module",
+    "license": "AFL-3.0",
+    "authors": [
+        {
+            "name": "Chibuike Mokwe"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Nomba\\PrestaShop\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.1"
+    }
+}

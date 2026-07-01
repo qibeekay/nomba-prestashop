@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>nomba</name>
+    <displayName><![CDATA[Nomba Checkout]]></displayName>
+    <version><![CDATA[1.0.0]]></version>
+    <description><![CDATA[Accept payments via Nomba Checkout API]]></description>
+    <author><![CDATA[Chibuike Mokwe]]></author>
+    <tab><![CDATA[payments_gateways]]></tab>
+    <is_configurable>1</is_configurable>
+    <need_instance>1</need_instance>
+</module>
