@@ -18,6 +18,20 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
 
     public function postProcess()
     {
+        // ===== ADD THIS LOGGING BLOCK AT THE VERY TOP =====
+        $logFile = _PS_MODULE_DIR_ . 'nomba/webhook.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $log = "[$timestamp] ========== NEW WEBHOOK HIT ==========\n";
+        $log .= "Method: " . $_SERVER['REQUEST_METHOD'] . "\n";
+        $log .= "IP: " . $_SERVER['REMOTE_ADDR'] . "\n";
+        $log .= "User-Agent: " . ($_SERVER['HTTP_USER_AGENT'] ?? 'N/A') . "\n";
+        $log .= "Raw Payload: " . file_get_contents('php://input') . "\n";
+        $log .= "GET params: " . json_encode($_GET) . "\n";
+        $log .= "Headers: " . json_encode(getallheaders()) . "\n";
+        $log .= "--------------------------------------------\n";
+        file_put_contents($logFile, $log, FILE_APPEND);
+        // ===== END LOGGING BLOCK =====
+
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             $reference = Tools::getValue('orderReference') ?? Tools::getValue('reference');
             if ($reference) {
@@ -31,54 +45,57 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         $payload = file_get_contents('php://input');
 
         if (empty($payload)) {
+            file_put_contents($logFile, "[$timestamp] ERROR: Empty payload\n\n", FILE_APPEND);
             http_response_code(400);
             die('Empty payload');
         }
 
         $data = json_decode($payload, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
+            file_put_contents($logFile, "[$timestamp] ERROR: Invalid JSON - " . json_last_error_msg() . "\n\n", FILE_APPEND);
             http_response_code(400);
             die('Invalid JSON');
         }
 
         // Verification ping
         if (empty($data) || (!isset($data['event_type']) && !isset($data['event']) && !isset($data['order']))) {
+            file_put_contents($logFile, "[$timestamp] INFO: Verification ping\n\n", FILE_APPEND);
             http_response_code(200);
             die('OK');
         }
 
         $eventType = $data['event_type'] ?? $data['event'] ?? '';
+        file_put_contents($logFile, "[$timestamp] INFO: Event Type: $eventType\n", FILE_APPEND);
 
         // Handle refund webhook
         if ($eventType == 'transaction.refund.successful' || $eventType == 'refund.successful') {
-            // 1. Pull order reference out using our reliable fallback parsing chain
             $orderReference = $data['orderReference']
                 ?? $data['order']['orderReference']
                 ?? $data['data']['order']['orderReference']
                 ?? $data['data']['merchantTxRef']
                 ?? null;
 
+            file_put_contents($logFile, "[$timestamp] REFUND: orderReference = $orderReference\n", FILE_APPEND);
+
             if ($orderReference) {
                 $parts = explode('_', $orderReference);
-                $cartId = isset($parts[1]) ? (int)$parts[1] : 0;
+                $cartId = isset($parts[1]) ? (int) $parts[1] : 0;
 
                 if ($cartId) {
-                    $orderId = (int)Order::getIdByCartId($cartId);
+                    $orderId = (int) Order::getIdByCartId($cartId);
                     if ($orderId) {
                         $order = new Order($orderId);
                         if (Validate::isLoadedObject($order)) {
-                            // Update PrestaShop Order State to Refunded
-                            $order->setCurrentState((int)Configuration::get('PS_OS_REFUND'));
-
-                            // Update your custom transaction database logs using unique id_cart
+                            $order->setCurrentState((int) Configuration::get('PS_OS_REFUND'));
                             Db::getInstance()->update(
                                 'nomba_transaction',
                                 [
                                     'status' => 'refunded',
                                     'date_upd' => date('Y-m-d H:i:s')
                                 ],
-                                'id_cart = ' . (int)$cartId
+                                'id_cart = ' . (int) $cartId
                             );
+                            file_put_contents($logFile, "[$timestamp] REFUND: Order $orderId updated\n\n", FILE_APPEND);
                         }
                     }
                 }
@@ -89,6 +106,7 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
 
         // Ignore non-payment events
         if ($eventType && $eventType !== 'payment_success' && $eventType !== 'transaction.successful' && !isset($data['order'])) {
+            file_put_contents($logFile, "[$timestamp] INFO: Event ignored: $eventType\n\n", FILE_APPEND);
             http_response_code(200);
             die('Event ignored');
         }
@@ -118,14 +136,17 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         $accountNumber = $data['data']['accountNumber'] ?? $data['data']['customer']['accountNumber'] ?? $data['order']['accountNumber'] ?? null;
         $bankCode = $data['data']['bankCode'] ?? $data['data']['customer']['bankCode'] ?? $data['order']['bankCode'] ?? null;
 
+        file_put_contents($logFile, "[$timestamp] PARSED: orderRef=$orderReference, txnRef=$transactionRef, amount=$amount, acct=$accountNumber, bank=$bankCode\n", FILE_APPEND);
+
         if (!$orderReference) {
+            file_put_contents($logFile, "[$timestamp] ERROR: Missing orderReference\n\n", FILE_APPEND);
             http_response_code(400);
             die('Missing orderReference');
         }
 
         try {
             $parts = explode('_', $orderReference);
-            $cartId = isset($parts[1]) ? (int)$parts[1] : 0;
+            $cartId = isset($parts[1]) ? (int) $parts[1] : 0;
             if (!$cartId) {
                 throw new Exception('Cannot extract cart ID from: ' . $orderReference);
             }
@@ -136,20 +157,21 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
             }
 
             if (Order::getIdByCartId($cartId)) {
+                file_put_contents($logFile, "[$timestamp] INFO: Order already exists for cart $cartId\n\n", FILE_APPEND);
                 http_response_code(200);
                 die('Order exists');
             }
 
-            $cartTotal = (float)$cart->getOrderTotal(true, Cart::BOTH);
-            if (abs($cartTotal - (float)$amount) > 0.01) {
+            $cartTotal = (float) $cart->getOrderTotal(true, Cart::BOTH);
+            if (abs($cartTotal - (float) $amount) > 0.01) {
                 throw new Exception('Amount mismatch. Cart: ' . $cartTotal . ' Nomba: ' . $amount);
             }
 
             $customer = new Customer($cart->id_customer);
             $this->module->validateOrder(
-                (int)$cart->id,
-                (int)Configuration::get('PS_OS_PAYMENT'),
-                (float)$amount,
+                (int) $cart->id,
+                (int) Configuration::get('PS_OS_PAYMENT'),
+                (float) $amount,
                 $this->module->displayName,
                 'Nomba TXN: ' . $transactionRef . ' | Ref: ' . $orderReference,
                 ['transaction_id' => $transactionRef],
@@ -168,23 +190,25 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
                 }
 
                 Db::getInstance()->insert('nomba_transaction', [
-                    'id_cart' => (int)$cartId,
-                    'id_order' => (int)$orderId,
+                    'id_cart' => (int) $cartId,
+                    'id_order' => (int) $orderId,
                     'nomba_order_id' => pSQL($transactionRef),
                     'nomba_order_reference' => pSQL($orderReference),
-                    'amount' => (float)$amount,
+                    'amount' => (float) $amount,
                     'account_number' => pSQL($accountNumber),
                     'bank_code' => pSQL($bankCode),
                     'status' => 'completed',
                     'date_add' => date('Y-m-d H:i:s'),
                     'date_upd' => date('Y-m-d H:i:s'),
                 ]);
+                file_put_contents($logFile, "[$timestamp] SUCCESS: Order $orderId created for cart $cartId\n\n", FILE_APPEND);
             }
 
             http_response_code(200);
             die('OK');
         } catch (Exception $e) {
             PrestaShopLogger::addLog('Nomba Webhook Error: ' . $e->getMessage(), 3);
+            file_put_contents($logFile, "[$timestamp] EXCEPTION: " . $e->getMessage() . "\n\n", FILE_APPEND);
             http_response_code(500);
             die('Error: ' . $e->getMessage());
         }
