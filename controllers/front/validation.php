@@ -1,10 +1,19 @@
 <?php
 
+/**
+ * Front controller for validating and resolving Nomba payments.
+ * Handles client browser redirect callback, checks status, and loads confirmation or pending state.
+ */
 class NombaValidationModuleFrontController extends ModuleFrontController
 {
-    /** @var Nomba */
+    /** @var Nomba Module instance reference */
     public $module;
 
+    /**
+     * Initializes the controller, fetches the module instance, and validates it.
+     *
+     * @return void
+     */
     public function init()
     {
         parent::init();
@@ -15,6 +24,13 @@ class NombaValidationModuleFrontController extends ModuleFrontController
         }
     }
 
+    /**
+     * Resolves redirect validation status.
+     * Redirects to order confirmation if webhook has already run successfully,
+     * handles explicit failures, or renders the pending state page.
+     *
+     * @return void
+     */
     public function initContent()
     {
         parent::initContent();
@@ -28,7 +44,7 @@ class NombaValidationModuleFrontController extends ModuleFrontController
         }
 
         // 1. If order already exists, webhook worked - go to confirmation
-        $orderId = Order::getIdByCartId((int)$cart->id);
+        $orderId = Order::getIdByCartId((int) $cart->id);
         if ($orderId) {
             $order = new Order($orderId);
             Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $orderId . '&key=' . $order->secure_key);

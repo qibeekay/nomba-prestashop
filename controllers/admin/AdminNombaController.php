@@ -1,6 +1,14 @@
 <?php
+/**
+ * Back-office admin controller for configuring the Nomba Checkout payment settings.
+ * Renders Configuration fields and displays dynamic webhook URLs.
+ */
 class AdminNombaController extends ModuleAdminController
 {
+    /**
+     * AdminNombaController constructor.
+     * Configures the forms interface settings using native PrestaShop HelperOptions class structures.
+     */
     public function __construct()
     {
         $this->bootstrap = true;
@@ -50,6 +58,11 @@ class AdminNombaController extends ModuleAdminController
         ];
     }
 
+    /**
+     * Renders standard content view and appends dynamic webhook information panes.
+     *
+     * @return void
+     */
     public function initContent()
     {
         $this->display = 'options';
@@ -57,6 +70,11 @@ class AdminNombaController extends ModuleAdminController
         parent::initContent();
     }
 
+    /**
+     * Computes the dynamic callback links and fetches the visual alert boxes view.
+     *
+     * @return string Raw HTML/Smarty templates layout.
+     */
     protected function displayWebhookInfo()
     {
         $webhookUrl = $this->context->link->getModuleLink('nomba', 'webhook', [], true);

@@ -1,27 +1,52 @@
 <?php
 
 
+/**
+ * API client for interacting with the Nomba Checkout API.
+ * Manages authorization token retrieval, checkout link creation, and refund processing.
+ */
 class NombaApiClient
 {
+    /** @var string Client ID configuration value */
     private $clientId;
+
+    /** @var string Client Secret/Private Key configuration value */
     private $privateKey;
+
+    /** @var string Account ID configuration value */
     private $accountId;
+
+    /** @var bool Active mode (true = production, false = sandbox) */
     private $isLive;
+
+    /** @var string API target base url path */
     private $baseUrl;
+
+    /** @var string|null Cached access token string */
     private $accessToken;
 
+    /**
+     * NombaApiClient constructor.
+     * Loads saved Configuration settings and constructs API endpoints.
+     */
     public function __construct()
     {
         $this->clientId = \Configuration::get('NOMBA_CLIENT_ID');
         $this->privateKey = \Configuration::get('NOMBA_PRIVATE_KEY');
         $this->accountId = \Configuration::get('NOMBA_ACCOUNT_ID');
-        $this->isLive = (bool)\Configuration::get('NOMBA_LIVE_MODE');
+        $this->isLive = (bool) \Configuration::get('NOMBA_LIVE_MODE');
         $this->baseUrl = $this->isLive
             ? 'https://api.nomba.com/v1'
             : 'https://sandbox.nomba.com/v1';
     }
 
 
+    /**
+     * Issues and caches a secure authentication Access Token from Nomba API server.
+     *
+     * @return string Valid access token.
+     * @throws \Exception If cURL fails or server returns error status code.
+     */
     private function getAccessToken()
     {
         if ($this->accessToken !== null) {
@@ -31,8 +56,8 @@ class NombaApiClient
         $ch = curl_init($this->baseUrl . '/auth/token/issue');
 
         $authPayload = [
-            'grant_type'    => 'client_credentials',
-            'client_id'     => $this->clientId,
+            'grant_type' => 'client_credentials',
+            'client_id' => $this->clientId,
             'client_secret' => $this->privateKey
         ];
 
@@ -78,6 +103,14 @@ class NombaApiClient
     }
 
 
+    /**
+     * Calls Nomba order creation endpoint to obtain a redirect checkout hosted link.
+     *
+     * @param Cart $cart PrestaShop cart object instance.
+     * @param string $orderReference Unique order reference sequence.
+     * @return array Decoded response body.
+     * @throws \Exception On cURL errors or non-20x status replies.
+     */
     public function createCheckoutOrder($cart, $orderReference)
     {
         $context = \Context::getContext(); // <-- Add this
@@ -131,6 +164,13 @@ class NombaApiClient
         return $result;
     }
 
+    /**
+     * Cryptographically validates incoming webhooks against private key.
+     *
+     * @param string $payload Raw request JSON payload content.
+     * @param string $signature Signature header value.
+     * @return bool True if signature matches, false otherwise.
+     */
     public function verifyWebhookSignature($payload, $signature)
     {
         $computed = hash_hmac('sha512', $payload, $this->privateKey);
@@ -154,9 +194,9 @@ class NombaApiClient
         // Enforce strict camelCase syntax matching Nomba requirements
         $payload = [
             'transactionId' => $transactionRef,
-            'amount' => number_format((float)$amount, 2, '.', ''),
+            'amount' => number_format((float) $amount, 2, '.', ''),
             'accountNumber' => $accountNumber,
-            'bankCode'      => $bankCode
+            'bankCode' => $bankCode
         ];
 
         $jsonPayload = json_encode($payload);

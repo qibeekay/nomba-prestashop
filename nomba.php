@@ -5,8 +5,19 @@ if (!defined('_PS_VERSION_')) {
 
 require_once __DIR__ . '/vendor/autoload.php';
 
+/**
+ * Nomba payment module class.
+ * Integrates Nomba Checkout API with PrestaShop.
+ *
+ * @author Chibuike Mokwe
+ * @license AFL-3.0
+ */
 class Nomba extends PaymentModule
 {
+    /**
+     * Nomba constructor.
+     * Initializes module properties.
+     */
     public function __construct()
     {
         $this->name = 'nomba';
@@ -23,6 +34,11 @@ class Nomba extends PaymentModule
         $this->description = 'Accept payments via Nomba Checkout API';
     }
 
+    /**
+     * Installs the module, registers hooks, creates database tables, and registers admin tabs.
+     *
+     * @return bool True if installation is successful, false otherwise.
+     */
     public function install()
     {
         return parent::install()
@@ -36,6 +52,11 @@ class Nomba extends PaymentModule
             && Configuration::updateValue('NOMBA_LIVE_MODE', 0);
     }
 
+    /**
+     * Uninstalls the module, removes admin tabs, and deletes module configuration records.
+     *
+     * @return bool True if uninstallation is successful, false otherwise.
+     */
     public function uninstall()
     {
         return $this->uninstallTab()
@@ -47,6 +68,12 @@ class Nomba extends PaymentModule
             && parent::uninstall();
     }
 
+    /**
+     * Dynamically creates the `ps_nomba_transaction` database table.
+     * Used for storing payment metadata, transaction IDs, status, and bank coordinates.
+     *
+     * @return bool True if successful, false otherwise.
+     */
     protected function installSql()
     {
         $sql = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'nomba_transaction` (
@@ -69,6 +96,11 @@ class Nomba extends PaymentModule
         return Db::getInstance()->execute($sql);
     }
 
+    /**
+     * Registers the main AdminNomba controller tab under Payment gate settings.
+     *
+     * @return bool True on success, false on failure.
+     */
     public function installTab()
     {
         $tab = new Tab();
@@ -78,11 +110,16 @@ class Nomba extends PaymentModule
         foreach (Language::getLanguages(true) as $lang) {
             $tab->name[$lang['id_lang']] = 'Nomba';
         }
-        $tab->id_parent = (int)Tab::getIdFromClassName('AdminParentPayment');
+        $tab->id_parent = (int) Tab::getIdFromClassName('AdminParentPayment');
         $tab->module = $this->name;
         return $tab->add();
     }
 
+    /**
+     * Registers the AdminNombaRefund controller tab under hidden parent context.
+     *
+     * @return bool True on success, false on failure.
+     */
     public function installRefundTab()
     {
         $tab = new Tab();
@@ -97,9 +134,14 @@ class Nomba extends PaymentModule
         return $tab->add();
     }
 
+    /**
+     * Removes the AdminNomba controller tab.
+     *
+     * @return bool True on success, false on failure.
+     */
     public function uninstallTab()
     {
-        $id_tab = (int)Tab::getIdFromClassName('AdminNomba');
+        $id_tab = (int) Tab::getIdFromClassName('AdminNomba');
         if ($id_tab) {
             $tab = new Tab($id_tab);
             return $tab->delete();
@@ -107,9 +149,14 @@ class Nomba extends PaymentModule
         return true;
     }
 
+    /**
+     * Removes the AdminNombaRefund controller tab.
+     *
+     * @return bool True on success, false on failure.
+     */
     public function uninstallRefundTab()
     {
-        $id_tab = (int)Tab::getIdFromClassName('AdminNombaRefund');
+        $id_tab = (int) Tab::getIdFromClassName('AdminNombaRefund');
         if ($id_tab) {
             $tab = new Tab($id_tab);
             return $tab->delete();
@@ -117,11 +164,23 @@ class Nomba extends PaymentModule
         return true;
     }
 
+    /**
+     * Back-office module configuration gateway redirect.
+     * Automatically redirects the merchant user to the custom AdminNomba controller page.
+     *
+     * @return void
+     */
     public function getContent()
     {
         Tools::redirectAdmin($this->context->link->getAdminLink('AdminNomba'));
     }
 
+    /**
+     * Hook to register the Nomba payment option on checkout screen.
+     *
+     * @param array $params Hook parameters.
+     * @return array|void Array containing PaymentOption object, or void if inactive.
+     */
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
@@ -136,6 +195,12 @@ class Nomba extends PaymentModule
         return [$payment_option];
     }
 
+    /**
+     * Hook to display custom order information on checkout completion success page.
+     *
+     * @param array $params Hook parameters containing 'order' object.
+     * @return string Smarty template output content.
+     */
     public function hookPaymentReturn($params)
     {
         if (!$this->active) {
@@ -159,6 +224,13 @@ class Nomba extends PaymentModule
         return $this->display(__FILE__, 'views/templates/hook/payment_return.tpl');
     }
 
+    /**
+     * Hook to render the custom Nomba refund pane inside the back-office order view.
+     * Also handles rendering flash confirmation or error message banners from cookies.
+     *
+     * @param array $params Hook parameters containing 'id_order'.
+     * @return string HTML alerts and template content markup.
+     */
     public function hookDisplayAdminOrder($params)
     {
         $order = new Order($params['id_order']);
@@ -189,7 +261,7 @@ class Nomba extends PaymentModule
 
         $nombaTxn = Db::getInstance()->getRow(
             'SELECT account_number, bank_code FROM ' . _DB_PREFIX_ . 'nomba_transaction
-             WHERE id_order = ' . (int)$order->id
+             WHERE id_order = ' . (int) $order->id
         );
 
         $this->context->smarty->assign([
@@ -215,14 +287,14 @@ class Nomba extends PaymentModule
 
         $orderSlip = $params['order_slip'];
         // Total amount being partially or fully refunded via this specific credit slip
-        $refundAmount = (float)$orderSlip->amount + (float)$orderSlip->shipping_cost_amount;
+        $refundAmount = (float) $orderSlip->amount + (float) $orderSlip->shipping_cost_amount;
 
         $payments = $order->getOrderPaymentCollection();
         $transactionRef = $payments->count() ? $payments[0]->transaction_id : '';
 
         $nombaTxn = Db::getInstance()->getRow(
             'SELECT account_number, bank_code FROM ' . _DB_PREFIX_ . 'nomba_transaction
-             WHERE id_order = ' . (int)$order->id
+             WHERE id_order = ' . (int) $order->id
         );
 
         if (empty($transactionRef) || empty($nombaTxn['account_number']) || empty($nombaTxn['bank_code'])) {

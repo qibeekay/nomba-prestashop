@@ -1,8 +1,16 @@
 <?php
 require_once _PS_MODULE_DIR_ . 'nomba/src/Service/NombaApiClient.php';
 
+/**
+ * Hidden back-office admin controller for automated and manual refund operations.
+ * Interacts with Nomba APIs and manages order status transitions and internal audit logging.
+ */
 class AdminNombaRefundController extends ModuleAdminController
 {
+    /**
+     * AdminNombaRefundController constructor.
+     * Sets up controller environment context parameters.
+     */
     public function __construct()
     {
         parent::__construct();
@@ -10,11 +18,18 @@ class AdminNombaRefundController extends ModuleAdminController
         $this->module = Module::getInstanceByName('nomba');
     }
 
+    /**
+     * Resolves refund triggers.
+     * Evaluates order status, executes validation checks against bank details,
+     * enforces API idempotency guards, and contacts Nomba client endpoints to refund.
+     *
+     * @return void
+     */
     public function initContent()
     {
         parent::initContent();
 
-        $id_order = (int)Tools::getValue('id_order');
+        $id_order = (int) Tools::getValue('id_order');
         $order = new Order($id_order);
         $redirectToOrderView = $this->context->link->getAdminLink('AdminOrders') . '&id_order=' . $id_order . '&vieworder';
 
@@ -30,7 +45,7 @@ class AdminNombaRefundController extends ModuleAdminController
         // Fetch transaction details from local database
         $nombaTxn = Db::getInstance()->getRow(
             'SELECT account_number, bank_code, status FROM ' . _DB_PREFIX_ . 'nomba_transaction
-             WHERE id_order = ' . (int)$id_order
+             WHERE id_order = ' . (int) $id_order
         );
 
         if (empty($transactionRef) || empty($nombaTxn['account_number']) || empty($nombaTxn['bank_code'])) {
@@ -81,13 +96,13 @@ class AdminNombaRefundController extends ModuleAdminController
             $msg->add();
 
             // Transition Order state natively
-            $order->setCurrentState((int)Configuration::get('PS_OS_REFUND'));
+            $order->setCurrentState((int) Configuration::get('PS_OS_REFUND'));
 
             // Finalize local table idempotency flag
             Db::getInstance()->update('nomba_transaction', [
                 'status' => 'refunded',
                 'date_upd' => date('Y-m-d H:i:s')
-            ], 'id_order = ' . (int)$id_order);
+            ], 'id_order = ' . (int) $id_order);
 
             $this->context->cookie->nomba_refund_success = $this->module->l('Refund processed successfully: ') . $message;
         } catch (Exception $e) {

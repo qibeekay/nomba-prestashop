@@ -1,9 +1,21 @@
 <?php
+/**
+ * Front controller for handling Nomba webhook calls.
+ * Processes payment and refund event payloads asynchronously.
+ */
 class NombaWebhookModuleFrontController extends ModuleFrontController
 {
+    /** @var bool SSL enabled for webhook requests */
     public $ssl = true;
+
+    /** @var Nomba Module instance reference */
     public $module;
 
+    /**
+     * Initializes the controller, fetches the module instance, and flags request as AJAX.
+     *
+     * @return void
+     */
     public function init()
     {
         parent::init();
@@ -11,14 +23,26 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         $this->ajax = true;
     }
 
+    /**
+     * Suppresses normal front controller page rendering outputs.
+     *
+     * @return void
+     */
     public function display()
     {
         exit;
     }
 
+    /**
+     * Main webhook request handler logic.
+     * Receives POST notifications, parses payload, performs authentication audits/validations,
+     * registers orders upon successful payments, and updates states on refund triggers.
+     *
+     * @return void
+     */
     public function postProcess()
     {
-        // ===== ADD THIS LOGGING BLOCK AT THE VERY TOP =====
+        // ===== WEBHOOK LOGGING BLOCK =====
         $logFile = _PS_MODULE_DIR_ . 'nomba/webhook.log';
         $timestamp = date('Y-m-d H:i:s');
         $log = "[$timestamp] ========== NEW WEBHOOK HIT ==========\n";
@@ -30,7 +54,7 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         $log .= "Headers: " . json_encode(getallheaders()) . "\n";
         $log .= "--------------------------------------------\n";
         file_put_contents($logFile, $log, FILE_APPEND);
-        // ===== END LOGGING BLOCK =====
+        // ===== WEBHOOK LOGGING BLOCK =====
 
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             $reference = Tools::getValue('orderReference') ?? Tools::getValue('reference');

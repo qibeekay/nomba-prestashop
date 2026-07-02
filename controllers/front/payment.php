@@ -1,15 +1,31 @@
 <?php
 
+/**
+ * Front controller for initiating Nomba payment checkout.
+ * Redirects customer to Nomba secure payment page.
+ */
 class NombaPaymentModuleFrontController extends ModuleFrontController
 {
-    public $module; // <-- Add this
+    /** @var Nomba Module instance reference */
+    public $module;
 
+    /**
+     * Initializes the controller and fetches the module instance.
+     *
+     * @return void
+     */
     public function init()
     {
         parent::init();
-        $this->module = Module::getInstanceByName('nomba'); // <-- Add this
+        $this->module = Module::getInstanceByName('nomba');
     }
 
+    /**
+     * Processes customer checkout logic, verifies configuration,
+     * creates a checkout order via the Nomba API, and redirects to payment link.
+     *
+     * @return void
+     */
     public function postProcess()
     {
         $cart = $this->context->cart;
