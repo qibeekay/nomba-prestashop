@@ -13,7 +13,7 @@ class NombaApiClient
     /** @var string Client Secret/Private Key configuration value */
     private $privateKey;
 
-    /** @var string Account ID configuration value */
+    /** @var string Sub Account ID configuration value */
     private $accountId;
 
     /** @var bool Active mode (true = production, false = sandbox) */
@@ -24,6 +24,11 @@ class NombaApiClient
 
     /** @var string|null Cached access token string */
     private $accessToken;
+
+    // Hackathon parent account ID - must be in header
+    const PARENT_ACCOUNT_ID = 'f666ef9b-888e-4799-85ce-acb505b28023';
+    // Hackathon webhook signing key
+    const WEBHOOK_KEY = 'NombaHackathon2026';
 
     /**
      * NombaApiClient constructor.
@@ -71,7 +76,7 @@ class NombaApiClient
 
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
-            'accountId: ' . $this->accountId
+            'accountId: ' . self::PARENT_ACCOUNT_ID
         ]);
 
         $response = curl_exec($ch);
@@ -113,9 +118,9 @@ class NombaApiClient
      */
     public function createCheckoutOrder($cart, $orderReference)
     {
-        $context = \Context::getContext(); // <-- Add this
-        $link = $context->link; // <-- Add this
-        $customer = new Customer($cart->id_customer);
+        $token = $this->getAccessToken();
+        $context = \Context::getContext();
+        $link = $context->link;
         $currency = new Currency($cart->id_currency);
 
         $payload = [
@@ -140,8 +145,9 @@ class NombaApiClient
         // curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
-            'Authorization: Bearer ' . $this->clientId,
-            'accountId: ' . $this->accountId,
+            // 'Authorization: Bearer ' . $this->clientId,
+            'Authorization: Bearer ' . $token,
+            'accountId: ' . self::PARENT_ACCOUNT_ID,
             'Signature: ' . $signature
         ]);
 
@@ -171,10 +177,26 @@ class NombaApiClient
      * @param string $signature Signature header value.
      * @return bool True if signature matches, false otherwise.
      */
-    public function verifyWebhookSignature($payload, $signature)
+    public function verifyWebhookSignature($payload, $headers)
     {
-        $computed = hash_hmac('sha512', $payload, $this->privateKey);
-        return hash_equals($computed, $signature);
+        $data = json_decode($payload, true);
+        $m = $data['data']['merchant'];
+        $t = $data['data']['transaction'];
+
+        $s = implode(':', [
+            $data['event_type'],
+            $data['requestId'],
+            $m['userId'],
+            $m['walletId'],
+            $t['transactionId'],
+            $t['type'],
+            $t['time'],
+            $t['responseCode'] ?? '',
+            $headers['nomba-timestamp']
+        ]);
+
+        $computed = base64_encode(hash_hmac('sha256', $s, self::WEBHOOK_KEY, true));
+        return hash_equals($computed, $headers['nomba-signature']);
     }
 
     /**
@@ -196,7 +218,8 @@ class NombaApiClient
             'transactionId' => $transactionRef,
             'amount' => number_format((float) $amount, 2, '.', ''),
             'accountNumber' => $accountNumber,
-            'bankCode' => $bankCode
+            'bankCode' => $bankCode,
+            'accountId' => $this->accountId
         ];
 
         $jsonPayload = json_encode($payload);
@@ -213,7 +236,7 @@ class NombaApiClient
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Authorization: Bearer ' . $token,
-            'accountId: ' . $this->accountId,
+            'accountId: ' . self::PARENT_ACCOUNT_ID,
             'Signature: ' . $signature // This prevents the API from returning a 404
         ]);
 

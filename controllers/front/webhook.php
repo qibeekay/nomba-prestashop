@@ -5,17 +5,9 @@
  */
 class NombaWebhookModuleFrontController extends ModuleFrontController
 {
-    /** @var bool SSL enabled for webhook requests */
     public $ssl = true;
-
-    /** @var Nomba Module instance reference */
     public $module;
 
-    /**
-     * Initializes the controller, fetches the module instance, and flags request as AJAX.
-     *
-     * @return void
-     */
     public function init()
     {
         parent::init();
@@ -23,35 +15,44 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         $this->ajax = true;
     }
 
-    /**
-     * Suppresses normal front controller page rendering outputs.
-     *
-     * @return void
-     */
     public function display()
     {
         exit;
     }
 
     /**
-     * Main webhook request handler logic.
-     * Receives POST notifications, parses payload, performs authentication audits/validations,
-     * registers orders upon successful payments, and updates states on refund triggers.
-     *
-     * @return void
+     * Polyfill for getallheaders() on Nginx/PHP-FPM
      */
+    private function getRequestHeaders()
+    {
+        if (function_exists('getallheaders')) {
+            return array_change_key_case(getallheaders(), CASE_LOWER);
+        }
+        $headers = [];
+        foreach ($_SERVER as $name => $value) {
+            if (substr($name, 0, 5) == 'HTTP_') {
+                $key = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))));
+                $headers[strtolower($key)] = $value;
+            }
+        }
+        return $headers;
+    }
+
     public function postProcess()
     {
-        // ===== WEBHOOK LOGGING BLOCK =====
         $logFile = _PS_MODULE_DIR_ . 'nomba/webhook.log';
         $timestamp = date('Y-m-d H:i:s');
+        $payload = file_get_contents('php://input');
+        $headers = $this->getRequestHeaders();
+
+        // ===== WEBHOOK LOGGING BLOCK =====
         $log = "[$timestamp] ========== NEW WEBHOOK HIT ==========\n";
         $log .= "Method: " . $_SERVER['REQUEST_METHOD'] . "\n";
         $log .= "IP: " . $_SERVER['REMOTE_ADDR'] . "\n";
         $log .= "User-Agent: " . ($_SERVER['HTTP_USER_AGENT'] ?? 'N/A') . "\n";
-        $log .= "Raw Payload: " . file_get_contents('php://input') . "\n";
+        $log .= "Raw Payload: " . $payload . "\n";
         $log .= "GET params: " . json_encode($_GET) . "\n";
-        $log .= "Headers: " . json_encode(getallheaders()) . "\n";
+        $log .= "Headers: " . json_encode($headers) . "\n";
         $log .= "--------------------------------------------\n";
         file_put_contents($logFile, $log, FILE_APPEND);
         // ===== WEBHOOK LOGGING BLOCK =====
@@ -66,13 +67,29 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
             die('OK');
         }
 
-        $payload = file_get_contents('php://input');
-
         if (empty($payload)) {
             file_put_contents($logFile, "[$timestamp] ERROR: Empty payload\n\n", FILE_APPEND);
             http_response_code(400);
             die('Empty payload');
         }
+
+        // ===== SIGNATURE VALIDATION - THIS IS THE CRITICAL PART =====
+        if (empty($headers['nomba-signature']) || empty($headers['nomba-timestamp'])) {
+            file_put_contents($logFile, "[$timestamp] ERROR: Missing nomba-signature or nomba-timestamp headers\n\n", FILE_APPEND);
+            http_response_code(401);
+            die('Missing signature headers');
+        }
+
+        require_once _PS_MODULE_DIR_ . 'nomba/src/Service/NombaApiClient.php';
+        $nombaApi = new NombaApiClient();
+
+        if (!$nombaApi->verifyWebhookSignature($payload, $headers)) {
+            file_put_contents($logFile, "[$timestamp] ERROR: Signature verification failed\n\n", FILE_APPEND);
+            http_response_code(401);
+            die('Invalid signature');
+        }
+        file_put_contents($logFile, "[$timestamp] INFO: Signature verified OK\n", FILE_APPEND);
+        // ===== END SIGNATURE VALIDATION =====
 
         $data = json_decode($payload, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
