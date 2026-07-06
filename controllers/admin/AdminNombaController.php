@@ -50,6 +50,13 @@ class AdminNombaController extends ModuleAdminController
                         'required' => true,
                         'desc' => $this->module->l('Used to verify webhook signatures from Nomba'),
                     ],
+                    'NOMBA_WEBHOOK_KEY' => [
+                        'title' => $this->module->l('Webhook Signature Key'),
+                        'type' => 'text',
+                        'size' => 64,
+                        'required' => false,
+                        'desc' => $this->module->l('The Signature Key configured for this webhook in your Nomba Merchant Dashboard. Defaults to NombaHackathon2026.'),
+                    ],
                 ],
                 'submit' => [
                     'title' => $this->module->l('Save'),

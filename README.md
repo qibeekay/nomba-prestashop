@@ -25,29 +25,105 @@ Accept payments securely via the **Nomba Checkout API** in your PrestaShop store
 
 ---
 
-## Installation Guide
+## 📦 Packaging & Installation Guide
 
-1. **Pack the Module**: Compress the `nomba` directory into a `.zip` archive (ensure the folder name inside is `nomba`).
-2. **Upload to PrestaShop**:
-   - Go to your PrestaShop back office.
-   - Navigate to **Modules** → **Module Manager**.
-   - Click **Upload a module** and select your `nomba.zip` archive.
-3. **Configure the Module**: Once installed, click **Configure** on the Nomba module card or navigate to **Payment** → **Nomba**.
+To deploy this module on a PrestaShop store, follow these steps:
+
+### Step 1: Zip the Module
+
+Before uploading, the module must be compiled and packaged into a ZIP archive:
+
+1. **Resolve Dependencies**: Ensure that composer dependencies are installed and the autoloader is generated. In the root directory of the `nomba` module, run:
+   ```bash
+   composer install --no-dev --optimize-autoloader
+   ```
+2. **Compress Folder**: Zip the `nomba` directory.
+   - **Important**: The parent folder inside the ZIP file **must** be named exactly `nomba` (e.g., extracting the ZIP should result in a folder named `nomba` containing `nomba.php`, etc., not flat files at the ZIP root or a folder like `nomba-master`).
+   - You can run the following command in your terminal from the `modules/` directory:
+     ```bash
+     zip -r nomba.zip nomba
+     ```
+
+### Step 2: Upload to PrestaShop
+
+1. Log in to your PrestaShop **Admin Back-Office**.
+2. From the left sidebar, navigate to **Modules** → **Module Manager**.
+3. At the top-right of the page, click the **Upload a module** button.
+4. Drag and drop your compiled `nomba.zip` file, or select it from your file browser.
+5. PrestaShop will upload and automatically extract/install the module. Once complete, you will see a success message.
 
 ---
 
-## Configuration Settings
+## ⚙️ Configuration Settings
 
-Under the **Nomba Checkout Settings** in the module configuration, provide the following parameters:
+Once the module is installed, you need to configure the API credentials and set up the webhooks to handle payments and refunds correctly.
 
-| Configuration Key   | Title       | Description                                                                                                                        | Required |
-| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `NOMBA_LIVE_MODE`   | Live Mode   | Check to toggle production environment (`https://api.nomba.com/v1`). Uncheck for Sandbox/Testing (`https://sandbox.nomba.com/v1`). | Yes      |
-| `NOMBA_CLIENT_ID`   | Client ID   | The Client ID issued by your Nomba developer settings interface.                                                                   | Yes      |
-| `NOMBA_ACCOUNT_ID`  | Account ID  | The Account ID issued by Nomba, passed as a header parameter (`accountId`).                                                        | Yes      |
-| `NOMBA_PRIVATE_KEY` | Private Key | The cryptographic Client Secret key used for API authentication and hashing.                                                       | Yes      |
+### Step 1: Open the Module Configuration
 
-_Note: In the configuration view, copy the displayed **Webhook URL** and configure it in your Nomba merchant portal dashboard._
+- Click **Configure** on the Nomba module card inside the Module Manager.
+- Alternatively, go to **Payment** → **Nomba** in the side navigation menu.
+
+### Step 2: Input API Credentials
+
+In the **Nomba Checkout Settings** panel, configure the following fields:
+
+| Field Name      | Configuration Key   | Description                                                                                                                            | Required |
+| :-------------- | :------------------ | :------------------------------------------------------------------------------------------------------------------------------------- | :------- |
+| **Live Mode**   | `NOMBA_LIVE_MODE`   | Toggle to enable production environment (`https://api.nomba.com/v1`). Disable to use Sandbox/Testing (`https://sandbox.nomba.com/v1`). | Yes      |
+| **Client ID**   | `NOMBA_CLIENT_ID`   | The Client ID issued by your Nomba developer settings interface.                                                                       | Yes      |
+| **Account ID**  | `NOMBA_ACCOUNT_ID`  | The Account ID issued by Nomba, passed as a header parameter (`accountId`).                                                            | Yes      |
+| **Private Key** | `NOMBA_PRIVATE_KEY` | The cryptographic Client Secret key used for API authentication and signature hashing.                                                 | Yes      |
+
+_Click **Save** to apply the configuration._
+
+### Step 3: Configure Callback and Webhook URLs
+
+At the bottom of the configuration screen under the **Nomba URL Configuration** panel, the module displays two dynamic URLs generated for your store:
+
+1. **Webhook URL** (e.g., `https://yourstore.com/module/nomba/webhook`):
+   - **Action**: Copy this URL and log in to your **Nomba Merchant Dashboard**.
+   - **Navigation**: Navigate to **Settings** → **Webhooks** and paste this URL into the Webhook URL field.
+   - **Purpose**: This enables Nomba to notify your store asynchronously of successful payments, resolving checkout browser close errors.
+2. **Redirect URL** (e.g., `https://yourstore.com/module/nomba/validation`):
+   - **Action**: Copy this URL and paste it as the `callbackUrl` in your Nomba account settings or Checkout API integration options.
+   - **Purpose**: This is where customers return after completing their payment to verify their order status.
+
+---
+
+## 🛒 How to Use the Module
+
+### 1. Customer Checkout Experience
+
+- On the checkout page, customers will see **Pay with Nomba** under the available payment options.
+- The payment option lists **Card, Bank Transfer, USSD** as accepted payment channels.
+- When they select Nomba and click "Place Order", they are redirected to a secure payment page hosted by Nomba.
+- Upon completion (or failure/cancellation), they are redirected back to the store's Redirect URL, which presents a loading validation screen until webhook verification completes, and then redirects them to the native PrestaShop **Order Confirmation** page.
+
+### 2. Processing Refunds
+
+The module supports refunding transactions using two distinct flows:
+
+#### Flow A: Manual Back-Office Refund (Recommended)
+
+Use this option when you want to initiate a full refund directly to the customer's bank account:
+
+1. Go to **Orders** → **Orders** and select the order that was paid via Nomba.
+2. Scroll down to find the **Nomba Refund** pane.
+3. If the payment details (bank code and account number) were successfully captured during checkout:
+   - Click the **Process Refund via Nomba API** button.
+   - Confirm the prompt. The module will trigger an API call to Nomba to refund the full order total directly to the customer's bank account, update the order status to **Refunded**, and write a private comment to the order history.
+4. If payment details were _not_ captured (e.g., bank transfer details were not saved or manual handling is needed):
+   - The pane will display a warning: `Manual Refund Required. Bank details not captured.`
+   - Copy the displayed **Transaction Reference** and click **Open Nomba Dashboard** to perform a manual refund inside the Nomba portal.
+
+#### Flow B: Automated Hook Refund (Credit Slips)
+
+Use this option when processing partial or standard PrestaShop refunds:
+
+1. On the Order Details page, click **Standard Refund** or **Partial Refund** at the top bar.
+2. Select the items/quantities to refund and check the **Generate a credit slip** option.
+3. Complete the refund inside PrestaShop.
+4. The module's background hook (`actionOrderSlipAdd`) will intercept the credit slip generation and automatically call the Nomba Refund API to send the designated refund amount back to the customer's captured bank account.
 
 ---
 

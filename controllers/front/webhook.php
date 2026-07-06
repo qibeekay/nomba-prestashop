@@ -67,15 +67,19 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
             die('OK');
         }
 
-        if (empty($payload)) {
-            file_put_contents($logFile, "[$timestamp] ERROR: Empty payload\n\n", FILE_APPEND);
-            http_response_code(400);
-            die('Empty payload');
+        // Decode first to check if it's a ping
+        $data = json_decode($payload, true);
+
+        // If payload is empty, {}, or has no event_type = verification ping
+        if (empty($payload) || $payload === '{}' || !isset($data['event_type'])) {
+            file_put_contents($logFile, "[$timestamp] INFO: Verification ping detected - returning 200\n\n", FILE_APPEND);
+            http_response_code(200);
+            die('OK');
         }
 
-        // ===== SIGNATURE VALIDATION - THIS IS THE CRITICAL PART =====
+        // Only real webhooks get here - now we REQUIRE signature
         if (empty($headers['nomba-signature']) || empty($headers['nomba-timestamp'])) {
-            file_put_contents($logFile, "[$timestamp] ERROR: Missing nomba-signature or nomba-timestamp headers\n\n", FILE_APPEND);
+            file_put_contents($logFile, "[$timestamp] ERROR: Real webhook missing nomba-signature or nomba-timestamp\n\n", FILE_APPEND);
             http_response_code(401);
             die('Missing signature headers');
         }
@@ -88,10 +92,11 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
             http_response_code(401);
             die('Invalid signature');
         }
+
         file_put_contents($logFile, "[$timestamp] INFO: Signature verified OK\n", FILE_APPEND);
+
         // ===== END SIGNATURE VALIDATION =====
 
-        $data = json_decode($payload, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             file_put_contents($logFile, "[$timestamp] ERROR: Invalid JSON - " . json_last_error_msg() . "\n\n", FILE_APPEND);
             http_response_code(400);
@@ -129,7 +134,7 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
                         if (Validate::isLoadedObject($order)) {
                             $order->setCurrentState((int) Configuration::get('PS_OS_REFUND'));
                             Db::getInstance()->update(
-                                'nomba_transaction',
+                                _DB_PREFIX_ . 'nomba_transaction',
                                 [
                                     'status' => 'refunded',
                                     'date_upd' => date('Y-m-d H:i:s')
@@ -174,8 +179,9 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
             ?? $data['data']['amount']
             ?? 0;
 
-        $accountNumber = $data['data']['accountNumber'] ?? $data['data']['customer']['accountNumber'] ?? $data['order']['accountNumber'] ?? null;
-        $bankCode = $data['data']['bankCode'] ?? $data['data']['customer']['bankCode'] ?? $data['order']['bankCode'] ?? null;
+        $accountNumber = $data['data']['accountNumber'] ?? $data['data']['customer']['accountNumber'] ?? $data['order']['accountNumber'] ?? $data['data']['customer']['billerId'] ?? null;
+
+        $bankCode = $data['data']['bankCode'] ?? $data['data']['customer']['bankCode'] ?? $data['order']['bankCode'] ?? $data['data']['customer']['productId'] ?? null;
 
         file_put_contents($logFile, "[$timestamp] PARSED: orderRef=$orderReference, txnRef=$transactionRef, amount=$amount, acct=$accountNumber, bank=$bankCode\n", FILE_APPEND);
 
@@ -197,31 +203,51 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
                 throw new Exception('Cart not found: ' . $cartId);
             }
 
-            if (Order::getIdByCartId($cartId)) {
-                file_put_contents($logFile, "[$timestamp] INFO: Order already exists for cart $cartId\n\n", FILE_APPEND);
-                http_response_code(200);
-                die('Order exists');
-            }
-
             $cartTotal = (float) $cart->getOrderTotal(true, Cart::BOTH);
-            if (abs($cartTotal - (float) $amount) > 0.01) {
-                throw new Exception('Amount mismatch. Cart: ' . $cartTotal . ' Nomba: ' . $amount);
+            $nombaAmount = (float) $amount;
+            $fee = (float) ($data['data']['transaction']['fee'] ?? 0);
+
+            // Allow tolerance for Nomba fees (up to 1 NGN or fee amount + 0.01)
+            $maxDifference = max(1.00, $fee + 0.01);
+
+            if (abs($cartTotal - $nombaAmount) > $maxDifference) {
+                throw new Exception('Amount mismatch. Cart: ' . $cartTotal . ' Nomba: ' . $nombaAmount . ' Fee: ' . $fee);
             }
 
-            $customer = new Customer($cart->id_customer);
-            $this->module->validateOrder(
-                (int) $cart->id,
-                (int) Configuration::get('PS_OS_PAYMENT'),
-                (float) $amount,
-                $this->module->displayName,
-                'Nomba TXN: ' . $transactionRef . ' | Ref: ' . $orderReference,
-                ['transaction_id' => $transactionRef],
-                null,
-                false,
-                $customer->secure_key
+            // 1. Check if order exists - create if not
+            $orderId = (int) Order::getIdByCartId($cartId);
+
+            if (!$orderId) {
+                $customer = new Customer($cart->id_customer);
+                $this->module->validateOrder(
+                    (int) $cart->id,
+                    (int) Configuration::get('PS_OS_PAYMENT'),
+                    (float) $cartTotal,
+                    $this->module->displayName,
+                    'Nomba TXN: ' . $transactionRef . ' | Ref: ' . $orderReference,
+                    ['transaction_id' => $transactionRef],
+                    null,
+                    false,
+                    $customer->secure_key
+                );
+                $orderId = $this->module->currentOrder;
+                file_put_contents($logFile, "[$timestamp] INFO: Order $orderId created by webhook\n", FILE_APPEND);
+            } else {
+                file_put_contents($logFile, "[$timestamp] INFO: Order $orderId already exists for cart $cartId\n", FILE_APPEND);
+            }
+
+            // 2. Now check if we already saved to nomba_transaction table
+            $txnRecordId = (int) Db::getInstance()->getValue(
+                'SELECT id_nomba_transaction FROM `' . _DB_PREFIX_ . 'nomba_transaction` WHERE id_cart = ' . (int) $cartId
             );
 
-            $orderId = $this->module->currentOrder;
+            if ($txnRecordId) {
+                file_put_contents($logFile, "[$timestamp] INFO: Transaction already logged for cart $cartId. ID: $txnRecordId\n\n", FILE_APPEND);
+                http_response_code(200);
+                die('Transaction already exists');
+            }
+
+            // 3. Save to nomba_transaction table
             if ($orderId) {
                 $order = new Order($orderId);
                 $payments = $order->getOrderPaymentCollection();
@@ -230,23 +256,35 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
                     $payments[0]->update();
                 }
 
-                Db::getInstance()->insert('nomba_transaction', [
+                // Clean "N/A" values
+                $accountNumber = ($accountNumber === 'N/A' || empty($accountNumber)) ? null : pSQL($accountNumber);
+                $bankCode = ($bankCode === 'N/A' || empty($bankCode)) ? null : pSQL($bankCode);
+
+                $insertResult = Db::getInstance()->insert('nomba_transaction', [
                     'id_cart' => (int) $cartId,
                     'id_order' => (int) $orderId,
                     'nomba_order_id' => pSQL($transactionRef),
                     'nomba_order_reference' => pSQL($orderReference),
                     'amount' => (float) $amount,
-                    'account_number' => pSQL($accountNumber),
-                    'bank_code' => pSQL($bankCode),
+                    'account_number' => $accountNumber,
+                    'bank_code' => $bankCode,
                     'status' => 'completed',
                     'date_add' => date('Y-m-d H:i:s'),
                     'date_upd' => date('Y-m-d H:i:s'),
                 ]);
-                file_put_contents($logFile, "[$timestamp] SUCCESS: Order $orderId created for cart $cartId\n\n", FILE_APPEND);
+
+                if (!$insertResult) {
+                    $sqlError = Db::getInstance()->getMsgError();
+                    file_put_contents($logFile, "[$timestamp] ERROR: DB Insert failed: $sqlError\n\n", FILE_APPEND);
+                    throw new Exception('Failed to save transaction: ' . $sqlError);
+                }
+
+                file_put_contents($logFile, "[$timestamp] SUCCESS: Transaction logged for Order $orderId, Cart $cartId\n\n", FILE_APPEND);
             }
 
             http_response_code(200);
             die('OK');
+
         } catch (Exception $e) {
             PrestaShopLogger::addLog('Nomba Webhook Error: ' . $e->getMessage(), 3);
             file_put_contents($logFile, "[$timestamp] EXCEPTION: " . $e->getMessage() . "\n\n", FILE_APPEND);

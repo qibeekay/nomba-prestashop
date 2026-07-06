@@ -65,6 +65,7 @@ class Nomba extends PaymentModule
             && Configuration::deleteByName('NOMBA_PRIVATE_KEY')
             && Configuration::deleteByName('NOMBA_ACCOUNT_ID')
             && Configuration::deleteByName('NOMBA_LIVE_MODE')
+            && Configuration::deleteByName('NOMBA_WEBHOOK_KEY')
             && parent::uninstall();
     }
 
@@ -203,7 +204,7 @@ class Nomba extends PaymentModule
      */
     public function hookPaymentReturn($params)
     {
-        if (!$this->active) {
+        if (!$this->active || !isset($params['order'])) {
             return;
         }
 
@@ -213,15 +214,23 @@ class Nomba extends PaymentModule
             return;
         }
 
+        $currency = new Currency($order->id_currency);
+
+        // PS 1.7+ safe way to format price
+        $formatted_total = $this->context->getCurrentLocale()->formatPrice(
+            $order->total_paid,
+            $currency->iso_code
+        );
+
         $this->smarty->assign([
             'shop_name' => $this->context->shop->name,
-            'total' => Tools::displayPrice($order->total_paid, $this->context->currency),
+            'total' => $formatted_total,
             'status' => 'ok',
             'reference' => $order->reference,
             'contact_url' => $this->context->link->getPageLink('contact', true)
         ]);
 
-        return $this->display(__FILE__, 'views/templates/hook/payment_return.tpl');
+        return $this->fetch('module:nomba/views/templates/hook/payment_return.tpl');
     }
 
     /**
