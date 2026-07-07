@@ -27,10 +27,16 @@ class NombaApiClient
     /** @var string Webhook verification key */
     private $webhookKey;
 
-    // Nomba Hackathon / Production constants
-    // const PARENT_ACCOUNT_ID = 'f666ef9b-888e-4799-85ce-acb505b28023';
+    /**
+     * Parent developer account ID issued by the Nomba platform.
+     * Crucial: The `accountId` HTTP header of all API calls (authentication, checkout, refunds) must be this Parent Account ID.
+     */
     const PARENT_ACCOUNT_ID = 'd4e77b84-2c39-48da-85d5-fa5edaa3b63c';
-    const WEBHOOK_KEY = 'NombaHackathon2027';
+
+    /**
+     * Default webhook validation secret key used during the hackathon/sandbox environment.
+     */
+    const WEBHOOK_KEY = 'NombaHackathon2026';
 
     /**
      * NombaApiClient constructor.
@@ -162,11 +168,16 @@ class NombaApiClient
     }
 
     /**
-     * Cryptographically validates incoming webhooks against the production private key.
+     * Cryptographically validates incoming webhooks against the configured webhook secret key.
+     * Computes the HMAC-SHA256 signature using the hashing payload layout specified by Nomba:
+     * `{event_type}:{requestId}:{userId}:{walletId}:{transactionId}:{type}:{time}:{responseCode}:{timestamp}`
+     *
+     * It iteratively checks the custom configured key, default constant key, and fallback hardcoded key
+     * using a constant-time comparison to prevent timing attacks.
      *
      * @param string $payload Raw request JSON payload content.
-     * @param array $headers Parsed request headers.
-     * @return bool True if signature matches, false otherwise.
+     * @param array $headers Parsed request headers (specifically `nomba-signature` or `nomba-sig-value`, and `nomba-timestamp`).
+     * @return bool True if signature matches any of the valid keys, false otherwise.
      */
     public function verifyWebhookSignature($payload, $headers)
     {
@@ -232,23 +243,32 @@ class NombaApiClient
      * Process a checkout refund via the Nomba API
      *
      * @param string $transactionRef Unique transaction identifier to refund
-     * @param float $amount Amount to be refunded
-     * @param string $accountNumber Customer bank account number
-     * @param string $bankCode Customer bank sorting code
+     * @param float|null $amount Amount to be refunded (null for full refund)
+     * @param string|null $accountNumber Customer bank account number
+     * @param string|null $bankCode Customer bank sorting code
      * @return array Decoded API response array
      * @throws \Exception On cURL errors or non-200 server responses
      */
-    public function refundTransaction($transactionRef, $amount, $accountNumber, $bankCode)
+    public function refundTransaction($transactionRef, $amount = null, $accountNumber = null, $bankCode = null)
     {
         $token = $this->getAccessToken();
 
         $payload = [
             'transactionId' => $transactionRef,
-            'amount' => number_format((float) $amount, 2, '.', ''),
-            'accountNumber' => $accountNumber,
-            'bankCode' => $bankCode,
-            'accountId' => $this->accountId
+            // 'accountId' => $this->accountId
         ];
+
+        if ($amount !== null && (float) $amount > 0) {
+            $payload['amount'] = round((float) $amount, 2);
+        }
+
+        if (!empty($accountNumber) && $accountNumber !== 'N/A') {
+            $payload['accountNumber'] = $accountNumber;
+        }
+
+        if (!empty($bankCode) && $bankCode !== 'N/A') {
+            $payload['bankCode'] = $bankCode;
+        }
 
         $jsonPayload = json_encode($payload);
         // $signature = hash_hmac('sha512', $jsonPayload, $this->privateKey);
@@ -278,6 +298,26 @@ class NombaApiClient
             PrestaShopLogger::addLog('Nomba Refund HTTP Error Code: ' . $httpCode, 3);
             PrestaShopLogger::addLog('Nomba Refund Error Response Body: ' . $response, 3);
             throw new \Exception('Nomba Refund Error: ' . ($result['description'] ?? $response));
+        }
+
+        $nombaCode = $result['code'] ?? null;
+        $nombaSuccess = $result['data']['success'] ?? null;
+        $nombaMessage = $result['data']['message'] ?? $result['description'] ?? $response;
+
+        if ($nombaCode !== '00') {
+            PrestaShopLogger::addLog(
+                'Nomba Refund Business Error. Code: ' . $nombaCode . ' | Message: ' . $nombaMessage . ' | Response: ' . $response,
+                3
+            );
+            throw new \Exception('Nomba Refund Failed: ' . $nombaMessage);
+        }
+
+        if ($nombaSuccess !== true && $nombaSuccess !== null) {
+            PrestaShopLogger::addLog(
+                'Nomba Refund API reported failure. success=' . var_export($nombaSuccess, true) . ' | Message: ' . $nombaMessage . ' | Response: ' . $response,
+                3
+            );
+            throw new \Exception('Nomba Refund Failed: ' . $nombaMessage);
         }
 
         return $result;
@@ -323,5 +363,91 @@ class NombaApiClient
             PrestaShopLogger::addLog('Nomba API (getTransactionByOrderReference) Exception: ' . $e->getMessage(), 3);
             return null;
         }
+    }
+
+    /**
+     * Perform a bank transfer refund by transferring funds from sub-account to customer bank account.
+     * This serves as a fallback when native checkout refund fails or is not supported.
+     *
+     * @param float $amount Amount to transfer
+     * @param string $accountNumber Recipient bank account number
+     * @param string $accountName Recipient account name
+     * @param string $bankCode Recipient bank code
+     * @param string $merchantTxRef Unique reference for idempotency (e.g., REFUND-ORDER-123-1699123456)
+     * @param string $senderName Sender name shown on recipient's statement
+     * @param string|null $narration Optional narration/description
+     * @return array Decoded API response
+     * @throws \Exception On API errors
+     */
+    public function transferRefund($amount, $accountNumber, $accountName, $bankCode, $merchantTxRef, $senderName, $narration = null)
+    {
+        $token = $this->getAccessToken();
+
+        $payload = [
+            'amount' => round((float) $amount, 2),
+            'accountNumber' => $accountNumber,
+            'accountName' => $accountName,
+            'bankCode' => $bankCode,
+            'merchantTxRef' => $merchantTxRef,
+            'senderName' => $senderName,
+        ];
+
+        if (!empty($narration)) {
+            $payload['narration'] = $narration;
+        }
+
+        $jsonPayload = json_encode($payload);
+
+        // Log request for debugging
+        PrestaShopLogger::addLog(
+            'Nomba Transfer Refund Request: subAccount=' . $this->accountId . ' | Payload=' . $jsonPayload,
+            1
+        );
+
+        $url = $this->baseUrl . '/transfers/bank/' . $this->accountId;
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonPayload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $token,
+            'accountId: ' . self::PARENT_ACCOUNT_ID,
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if (curl_errno($ch)) {
+            throw new \Exception('Transfer cURL Error: ' . curl_error($ch));
+        }
+
+        curl_close($ch);
+        $result = json_decode($response, true);
+
+        PrestaShopLogger::addLog(
+            'Nomba Transfer Refund Response: HTTP=' . $httpCode . ' | Body=' . $response,
+            1
+        );
+
+        if ($httpCode !== 200 && $httpCode !== 201) {
+            PrestaShopLogger::addLog('Nomba Transfer HTTP Error: ' . $httpCode . ' | ' . $response, 3);
+            throw new \Exception('Nomba Transfer Error: ' . ($result['description'] ?? $response));
+        }
+
+        $nombaCode = $result['code'] ?? null;
+        $nombaStatus = $result['status'] ?? null;
+        $nombaDescription = $result['description'] ?? '';
+
+        $isFailedStatus = ($nombaStatus === 'false' || $nombaStatus === false || $nombaStatus === 0);
+
+        if ($nombaCode !== '00' || $isFailedStatus) {
+            $errorMsg = !empty($nombaDescription) ? $nombaDescription : 'Transfer failed (code: ' . $nombaCode . ')';
+            PrestaShopLogger::addLog('Nomba Transfer Business Error: ' . $errorMsg, 3);
+            throw new \Exception('Nomba Transfer Failed: ' . $errorMsg);
+        }
+
+        return $result;
     }
 }

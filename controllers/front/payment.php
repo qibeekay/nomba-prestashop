@@ -22,7 +22,14 @@ class NombaPaymentModuleFrontController extends ModuleFrontController
 
     /**
      * Processes customer checkout logic, verifies configuration,
-     * creates a checkout order via the Nomba API, and redirects to payment link.
+     * creates a checkout order via the Nomba API, and redirects to the payment link.
+     *
+     * Detailed execution steps:
+     *  1. Validates the current customer context and shipping/billing address records.
+     *  2. Verifies that the module configuration (specifically the Sub-Account ID) is set up.
+     *  3. Generates a unique transaction reference with pattern "PS_{cart_id}_{timestamp}".
+     *  4. Calls the Nomba API to create a checkout session and retrieve a checkout link.
+     *  5. Redirects the user's browser to the hosted Nomba payment page, or displays validation errors.
      *
      * @return void
      */

@@ -24,9 +24,18 @@ class NombaValidationModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Resolves redirect validation status.
-     * Redirects to order confirmation if webhook has already run successfully,
-     * handles explicit failures, or renders the pending state page.
+     * Resolves the checkout redirect validation status when a customer returns from Nomba.
+     * Since webhooks are asynchronous, the customer may return to the store before the webhook processes.
+     *
+     * Workflow resolution:
+     *  1. Checks if the PrestaShop order already exists (indicating webhook processed successfully).
+     *     If so, immediately redirects to the Order Confirmation page.
+     *  2. Checks if the payment was explicitly flagged as failed during redirect.
+     *     If so, redirects back to the checkout page with error notifications.
+     *  3. API Fallback Check: Queries the Nomba API directly using the transaction reference.
+     *     If Nomba reports that the payment was successful, the method bypasses the webhook latency,
+     *     manually validates the order, inserts the tracking record into `ps_nomba_transaction`, and redirects.
+     *  4. If the order is still pending validation, loads the polling template to check status again.
      *
      * @return void
      */

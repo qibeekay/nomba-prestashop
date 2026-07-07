@@ -4,6 +4,40 @@ Accept payments securely via the **Nomba Checkout API** in your PrestaShop store
 
 ---
 
+## 🔑 Credentials Reference (Developer Reference)
+
+To assist developers in setting up, maintaining, or debugging this installation, use this section to record environment configurations.
+
+> [!WARNING]
+> Keep this file secure if it contains active credentials. Never commit production keys to public git repositories.
+
+### Demo Video for the Project
+
+- **YouTube Video**: `https://youtu.be/61p9l4lVv44?si=9k0k0k0k0k0k0k0k`
+
+### PrestaShop Admin Backoffice Login
+
+- **Admin Front URL**: `https://nombastore.dunbi.xyz/`
+- **Admin Backoffice URL**: `https://nombastore.dunbi.xyz/admin373nuwyqncgq2w1oqau/`
+- **Admin Email/Username**: `mokwechibuike7@gmail.com`
+- **Admin Password**: `Favorite1997#`
+
+### Nomba API Client Credentials (Test Environment)
+
+- **Account ID (Parent Account)**: `f666ef9b-888e-4799-85ce-acb505b28023`
+- **Account ID (Sub-Wallet)**: `080efc96-b3b1-46e5-bb39-069ac5089956`
+- **Nomba Webhook Signature Key**: `NombaHackathon2026`
+
+- **Mode**: Sandbox/Test Mode (`NOMBA_LIVE_MODE = 0`)
+- **Client ID**: `706df6c4-b8bb-4130-88c4-d21b052f8631`
+- **Private Key (Client Secret)**: `k8UobYk3APgOoxUnNL7VpuxzwTsH4LsXtydfjcHs8RH0YISBB4OMqJsaafG+U8fWETu9YZ96bNXE+DelCDuMPw==`
+
+### Nomba API Client Credentials (Live/Production Environment)
+
+- **Mode**: Live Mode (`NOMBA_LIVE_MODE = 1`)
+- **Client ID**: `e5e85b13-f560-4643-814e-c87435dbbc15`
+- **Private Key (Client Secret)**: `8/doS7Q3w77EANpk3vpgSrc05hhOiRWp3eBs01sXyZ1AmovtZUXlmrxie+xnEF2tR4q79t0IFufMD1d4JrkT8g==`
+
 ## Features
 
 - **Seamless Redirection Checkout**: Directs customers to a secure checkout hosted payment page on Nomba.
@@ -191,3 +225,35 @@ CREATE TABLE IF NOT EXISTS `ps_nomba_transaction` (
 
 - **Webhook Raw Log**: Webhook hit details, including request payloads, header variables, and state updates are saved locally at `modules/nomba/webhook.log`.
 - **System Logs**: Integration errors and security violations are logged directly to the PrestaShop native log database and can be reviewed under **Configure** → **Advanced Parameters** → **Logs** in your administration panel.
+
+---
+
+## 📂 File & Directory Structure
+
+Here is an overview of the key codebase elements for developers:
+
+```
+nomba/
+├── controllers/
+│   ├── admin/
+│   │   ├── AdminNombaController.php       # Handles configuration settings panel in backoffice
+│   │   └── AdminNombaRefundController.php # Manages backoffice manual refund processing (native/transfer)
+│   └── front/
+│       ├── payment.php                   # Initiates order checkout and redirects customer to Nomba
+│       ├── validation.php                # Front controller to verify transaction status (fallback mechanism)
+│       └── webhook.php                   # Webhook endpoint handling success and refund events asynchronously
+├── src/
+│   └── Service/
+│       └── NombaApiClient.php            # Main API wrapper class for token auth, checkout creation, refunds, & signature checks
+├── sql/
+│   └── install.sql                       # Place for static SQL schema additions (dynamic schema created inside nomba.php)
+├── views/
+│   └── templates/
+│       ├── admin/
+│       │   ├── order_refund.tpl          # Smarty template rendering the Nomba Refund pane in order details
+│       │   └── webhook_info.tpl          # Smarty template rendering the guide in config panel
+│       └── front/
+│           └── pending.tpl               # Smarty template displaying pending payment screen with auto-polling
+├── nomba.php                             # Entrypoint module class managing install, hooks, and views injection
+└── README.md                             # Integration guide and configuration reference
+```

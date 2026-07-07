@@ -7,7 +7,15 @@ class AdminNombaController extends ModuleAdminController
 {
     /**
      * AdminNombaController constructor.
-     * Configures the forms interface settings using native PrestaShop HelperOptions class structures.
+     * Sets up settings options layout using the PrestaShop HelperOptions system.
+     * Persists settings automatically into the `ps_configuration` database table.
+     *
+     * Settings configurations:
+     *  - `NOMBA_LIVE_MODE` (bool): Switches between sandbox/sandbox testing and production endpoints.
+     *  - `NOMBA_CLIENT_ID` (text): Unique Client ID issued by Nomba.
+     *  - `NOMBA_ACCOUNT_ID` (text): Sub-account ID assigned to identify target sub-wallet.
+     *  - `NOMBA_PRIVATE_KEY` (textarea): Hashing client secret credential.
+     *  - `NOMBA_WEBHOOK_KEY` (text): Custom secret signature key for webhook HMAC calculations.
      */
     public function __construct()
     {

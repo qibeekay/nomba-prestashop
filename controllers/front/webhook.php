@@ -38,6 +38,22 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         return $headers;
     }
 
+    /**
+     * Entrypoint for processing asynchronous Nomba webhook event notifications.
+     * Processes payment success events, refunds, and cancellations.
+     *
+     * Workflow layout:
+     *  1. Reads raw POST input stream and logs all header and payload details to `webhook.log` for debug/diagnostic purposes.
+     *  2. Ignores or redirects non-POST requests.
+     *  3. Parses incoming JSON payload. Automatically responds with HTTP 200 OK on empty/ping events.
+     *  4. Performs cryptographic HMAC-SHA256 signature verification on headers `nomba-signature` and `nomba-timestamp`.
+     *  5. Dispatches events:
+     *     - `payout_refund` / `payment_reversal`: Validates order/cart links and updates order state to Refunded or Partially Refunded.
+     *     - `payment_success` / `transaction.successful`: Validates payment amounts, creates the PrestaShop order if not already created,
+     *       updates payment transactions database tables, and registers captured customer bank details for future automated refunds.
+     *
+     * @return void
+     */
     public function postProcess()
     {
         $logFile = _PS_MODULE_DIR_ . 'nomba/webhook.log';
@@ -114,14 +130,14 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
         file_put_contents($logFile, "[$timestamp] INFO: Event Type: $eventType\n", FILE_APPEND);
 
         // Handle refund webhook
-        if ($eventType == 'transaction.refund.successful' || $eventType == 'refund.successful') {
+        if ($eventType == 'payout_refund' || $eventType == 'payment_reversal') {
             $orderReference = $data['orderReference']
                 ?? $data['order']['orderReference']
                 ?? $data['data']['order']['orderReference']
                 ?? $data['data']['merchantTxRef']
                 ?? null;
 
-            file_put_contents($logFile, "[$timestamp] REFUND: orderReference = $orderReference\n", FILE_APPEND);
+            file_put_contents($logFile, "[$timestamp] REFUND EVENT [$eventType]: orderReference = $orderReference\n", FILE_APPEND);
 
             if ($orderReference) {
                 $parts = explode('_', $orderReference);
@@ -132,16 +148,61 @@ class NombaWebhookModuleFrontController extends ModuleFrontController
                     if ($orderId) {
                         $order = new Order($orderId);
                         if (Validate::isLoadedObject($order)) {
-                            $order->setCurrentState((int) Configuration::get('PS_OS_REFUND'));
-                            Db::getInstance()->update(
-                                _DB_PREFIX_ . 'nomba_transaction',
-                                [
-                                    'status' => 'refunded',
-                                    'date_upd' => date('Y-m-d H:i:s')
-                                ],
-                                'id_cart = ' . (int) $cartId
+                            // Extract refund amount from payload
+                            $webhookAmount = $data['amount']
+                                ?? $data['data']['amount']
+                                ?? $data['order']['amount']
+                                ?? $data['data']['order']['amount']
+                                ?? $data['data']['transaction']['transactionAmount']
+                                ?? 0;
+
+                            $nombaTxn = Db::getInstance()->getRow(
+                                'SELECT amount, amount_refunded, status FROM `' . _DB_PREFIX_ . 'nomba_transaction`
+                                 WHERE id_cart = ' . (int) $cartId
                             );
-                            file_put_contents($logFile, "[$timestamp] REFUND: Order $orderId updated\n\n", FILE_APPEND);
+
+                            if ($nombaTxn) {
+                                $totalAmount = (float) $nombaTxn['amount'];
+                                $currentRefunded = (float) $nombaTxn['amount_refunded'];
+                                $refundAmountValue = (float) $webhookAmount;
+
+                                if ($refundAmountValue <= 0) {
+                                    // If no amount is provided, assume full refund
+                                    $newRefunded = $totalAmount;
+                                } else {
+                                    // To prevent double-counting if already updated via AdminNombaRefundController:
+                                    // If currentRefunded is already equal to or greater than the webhook amount,
+                                    // we assume this specific refund has already been accounted for.
+                                    if ($currentRefunded >= $refundAmountValue) {
+                                        $newRefunded = $currentRefunded;
+                                    } else {
+                                        $newRefunded = $currentRefunded + $refundAmountValue;
+                                    }
+                                }
+
+                                if ($newRefunded > $totalAmount) {
+                                    $newRefunded = $totalAmount;
+                                }
+
+                                $isFullRefund = ($newRefunded >= $totalAmount);
+                                $newStatus = $isFullRefund ? 'refunded' : 'partially_refunded';
+
+                                if ($isFullRefund) {
+                                    $order->setCurrentState((int) Configuration::get('PS_OS_REFUND'));
+                                }
+
+                                Db::getInstance()->update(
+                                    _DB_PREFIX_ . 'nomba_transaction',
+                                    [
+                                        'amount_refunded' => (float) $newRefunded,
+                                        'status' => $newStatus,
+                                        'date_upd' => date('Y-m-d H:i:s')
+                                    ],
+                                    'id_cart = ' . (int) $cartId
+                                );
+
+                                file_put_contents($logFile, "[$timestamp] REFUND: Order $orderId updated. Refunded: $newRefunded, Status: $newStatus\n\n", FILE_APPEND);
+                            }
                         }
                     }
                 }
