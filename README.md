@@ -13,7 +13,7 @@ To assist developers in setting up, maintaining, or debugging this installation,
 
 ### Demo Video for the Project
 
-- **YouTube Video**: `https://youtu.be/61p9l4lVv44?si=9k0k0k0k0k0k0k0k`
+- **Google Drive Video**: `https://drive.google.com/file/d/1WBTY6KxM7LiC80cXt2mqwDrqh8h1R2Lj/view?usp=sharing`
 
 ### PrestaShop Admin Backoffice Login
 
